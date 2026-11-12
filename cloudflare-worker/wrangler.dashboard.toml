@@ -10,4 +10,4 @@ MESSAGES_PER_MINUTE = "40"
 [[d1_databases]]
 binding = "DB"
 database_name = "telegram-support-relay-bot-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "56210a33-e636-4575-9421-a3fc8063a5d7"
