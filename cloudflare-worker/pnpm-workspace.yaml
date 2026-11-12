@@ -1,7 +1,10 @@
+packages:
+  - "."
+
 allowBuilds:
-  esbuild: set this to true or false
-  sharp: set this to true or false
-  workerd: set this to true or false
+  esbuild: true
+  sharp: true
+  workerd: true
 minimumReleaseAgeExclude:
   - '@typescript/typescript-aix-ppc64@7.0.2'
   - '@typescript/typescript-darwin-arm64@7.0.2'
@@ -26,3 +29,4 @@ minimumReleaseAgeExclude:
   - miniflare@4.20260708.0
   - typescript@7.0.2
   - wrangler@4.109.0
+
