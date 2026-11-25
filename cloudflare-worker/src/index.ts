@@ -1,6 +1,7 @@
 type Env = {
   DB: D1Database;
   BOT_TOKEN: string;
+  BOT_USERNAME?: string;
   ADMIN_IDS: string;
   DEFAULT_VERIFY_INTERVAL_MINUTES?: string;
   MESSAGES_PER_MINUTE?: string;
@@ -38,12 +39,38 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/health") return json({ ok: true });
-    if (url.pathname === "/setup-webhook") {
+    if (url.pathname === "/setup-webhook" || url.pathname === "/bot-status") {
+      if (url.pathname === "/bot-status" && req.method !== "GET") return new Response("method not allowed", { status: 405, headers: { Allow: "GET" } });
       const secret = url.searchParams.get("secret");
-      if (!secret || secret !== env.BOT_TOKEN.slice(-16)) return new Response("forbidden", { status: 403 });
-      return json(await tg(env, "setWebhook", { url: `${url.origin}/webhook`, allowed_updates: ["message", "callback_query"] }));
+      if (!env.BOT_TOKEN || !secret || !sameSecret(secret, env.BOT_TOKEN.slice(-16))) return new Response("forbidden", { status: 403 });
+      try {
+        const webhookSecret = await webhookSecretFor(env);
+        const redact = (value: string) => redactBotSecret(value, env.BOT_TOKEN, webhookSecret);
+        const me: any = await tg(env, "getMe", {});
+        if (me?.ok !== true || me.result?.is_bot !== true || !Number.isSafeInteger(me.result?.id) || me.result.id <= 0 || typeof me.result?.username !== "string") return json({ ok: false, error: "telegram_get_me_failed" }, { status: 502 });
+        const bot = { id: me.result.id, username: redact(me.result.username) };
+        const usernameMatch = env.BOT_USERNAME?.trim() ? normalizeUsername(me.result.username) === normalizeUsername(env.BOT_USERNAME) : null;
+        if (url.pathname === "/bot-status") {
+          const info: any = await tg(env, "getWebhookInfo", {});
+          if (info?.ok !== true || !info.result) return json({ ok: false, error: "telegram_get_webhook_info_failed", bot, username_match: usernameMatch }, { status: 502 });
+          return json({ ok: true, bot, username_match: usernameMatch, webhook: {
+            url: redact(safeWebhookUrl(info.result.url)),
+            pending_update_count: Number.isSafeInteger(info.result.pending_update_count) ? info.result.pending_update_count : null,
+            last_error_date: Number.isSafeInteger(info.result.last_error_date) ? info.result.last_error_date : null,
+            last_error_message: typeof info.result.last_error_message === "string" ? redact(info.result.last_error_message) : null,
+          } }, { headers: { "cache-control": "no-store" } });
+        }
+        if (usernameMatch === false) return json({ ok: false, error: "bot_username_mismatch", bot }, { status: 409 });
+        try { adminId(env); } catch { return json({ ok: false, error: "invalid_admin_ids" }, { status: 400 }); }
+        const result: any = await tg(env, "setWebhook", { url: `${url.origin}/webhook`, secret_token: webhookSecret, allowed_updates: ["message", "callback_query"] });
+        return json({ ok: result?.ok === true, result: result?.result === true, description: typeof result?.description === "string" ? redact(result.description) : undefined }, { status: result?.ok === true ? 200 : 502, headers: { "cache-control": "no-store" } });
+      } catch {
+        return json({ ok: false, error: "telegram_request_failed" }, { status: 502 });
+      }
     }
     if (url.pathname !== "/webhook" || req.method !== "POST") return new Response("not found", { status: 404 });
+    const webhookSecret = req.headers.get("X-Telegram-Bot-Api-Secret-Token");
+    if (!env.BOT_TOKEN || !webhookSecret || !sameSecret(webhookSecret, await webhookSecretFor(env))) return new Response("forbidden", { status: 403 });
     const update = await req.json<TgUpdate>();
     try {
       await ensureSchema(env);
@@ -57,6 +84,25 @@ export default {
   },
 };
 
+function normalizeUsername(value: string) { return value.trim().replace(/^@/, "").toLowerCase(); }
+function sameSecret(provided: string, expected: string) {
+  let difference = provided.length ^ expected.length;
+  for (let i = 0; i < expected.length; i++) difference |= (provided.charCodeAt(i) || 0) ^ expected.charCodeAt(i);
+  return difference === 0;
+}
+async function webhookSecretFor(env: Env) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(env.BOT_TOKEN));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+function redactBotSecret(value: string, token: string, webhookSecret: string) {
+  let text = value;
+  for (const secret of [token, token.slice(-16), webhookSecret]) if (secret) text = text.split(secret).join("[redacted]");
+  return text.slice(0, 1024);
+}
+function safeWebhookUrl(value: unknown) {
+  if (typeof value !== "string" || !value) return "";
+  try { const url = new URL(value); url.username = ""; url.password = ""; url.search = ""; url.hash = ""; return url.toString(); } catch { return ""; }
+}
 function json(data: unknown, init?: ResponseInit) { return new Response(JSON.stringify(data), { ...init, headers: { "content-type": "application/json; charset=utf-8", ...(init?.headers || {}) } }); }
 function esc(s: string) { return (s || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!)); }
 function adminId(env: Env) { const values = (env.ADMIN_IDS || "").replace(/\s/g, "").split(",").filter(Boolean).map(Number).filter(Number.isSafeInteger); if (values.length !== 1 || values[0] <= 0) throw new Error("ADMIN_IDS must contain exactly one positive administrator ID"); return values[0]; }
@@ -380,3 +426,4 @@ async function callback(q: TgCallback, env: Env) {
   if (act === "unexempt") { await setVerifyExempt(env, uid, false); return tg(env, "editMessageReplyMarkup", { chat_id: msg!.chat.id, message_id: msg!.message_id, reply_markup: await cardKeyboard(env, uid) }); }
   if (act === "noop") return answerCb(env, q.id, `当前验证间隔：${formatInterval(await getInterval(env, uid))}`);
 }
+
