@@ -3,11 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2026-07-09"
 
 [vars]
+BOT_USERNAME = "chujidayaofang_bot"
 DEFAULT_VERIFY_INTERVAL_MINUTES = "360"
 MESSAGES_PER_MINUTE = "40"
 
-# Dashboard deployment: replace this value in your own Fork before importing it into Cloudflare.
+# Dedicated conversation store for this bot; the former D1 database is retained.
 [[d1_databases]]
 binding = "DB"
-database_name = "telegram-support-relay-bot-db"
-database_id = "56210a33-e636-4575-9421-a3fc8063a5d7"
+database_name = "telegram-support-chujidayaofang-db"
+database_id = "8a073751-aed8-43c9-b58a-4b12a66de869"
